@@ -44,7 +44,146 @@ Quy trình làm feature:
 6. Chờ review và sửa comment nếu có.
 7. Merge sau khi PR được approve.
 
-### 3. Format commit
+### 3. Quy trình thao tác Git
+
+#### 3.1. Lấy code mới nhất trước khi làm việc
+
+Trước khi bắt đầu làm task, luôn cập nhật branch `dev` mới nhất:
+
+```bash
+git checkout dev
+git fetch origin
+git pull origin dev
+```
+
+Ý nghĩa:
+
+- `git checkout dev`: chuyển sang branch `dev`.
+- `git fetch origin`: lấy thông tin branch mới nhất từ remote nhưng chưa merge vào code local.
+- `git pull origin dev`: tải và merge code mới nhất từ remote `dev` vào local `dev`.
+
+#### 3.2. Tạo branch mới cho task
+
+Sau khi đã cập nhật `dev`, tạo branch riêng cho feature hoặc bug fix:
+
+```bash
+git checkout -b feature/<ten-ngan-gon>
+```
+
+Ví dụ:
+
+```bash
+git checkout -b feature/search-api
+```
+
+#### 3.3. Kiểm tra trạng thái file
+
+Trong quá trình code, thường xuyên kiểm tra file đã thay đổi:
+
+```bash
+git status
+```
+
+Lệnh này giúp biết:
+
+- File nào đã sửa.
+- File nào mới được tạo.
+- File nào đã được đưa vào staging area.
+- File nào chưa được commit.
+
+#### 3.4. Thêm file vào staging area
+
+Thêm toàn bộ thay đổi:
+
+```bash
+git add .
+```
+
+Hoặc chỉ thêm file cụ thể:
+
+```bash
+git add README.md
+git add backend/app/main.py
+```
+
+Không nên `git add .` nếu trong project đang có file tạm, log, cache hoặc dữ liệu không nên commit. Khi không chắc chắn, dùng `git status` trước.
+
+#### 3.5. Commit thay đổi
+
+Commit theo đúng format quy định:
+
+```bash
+git commit -m "feat: add search API"
+```
+
+Ví dụ khác:
+
+```bash
+git commit -m "fix: handle empty search query"
+git commit -m "docs: update git workflow"
+```
+
+#### 3.6. Push branch lên remote
+
+Lần đầu push branch mới:
+
+```bash
+git push -u origin feature/<ten-ngan-gon>
+```
+
+Ví dụ:
+
+```bash
+git push -u origin feature/search-api
+```
+
+Những lần sau trên cùng branch chỉ cần:
+
+```bash
+git push
+```
+
+#### 3.7. Cập nhật branch feature khi `dev` có code mới
+
+Nếu `dev` đã có thay đổi mới trong lúc đang làm feature, cập nhật branch của mình:
+
+```bash
+git checkout dev
+git fetch origin
+git pull origin dev
+git checkout feature/<ten-ngan-gon>
+git merge dev
+```
+
+Nếu có conflict, người làm branch phải tự xử lý conflict, test lại, commit và push lại.
+
+#### 3.8. Tạo Pull Request
+
+Sau khi đã push branch lên remote:
+
+1. Mở GitHub/GitLab.
+2. Tạo Pull Request từ branch feature vào `dev`.
+3. Điền mô tả PR theo template.
+4. Chờ thành viên khác review.
+5. Sửa comment nếu có.
+6. Merge sau khi PR được approve và test/build pass.
+
+#### 3.9. Sau khi PR đã merge
+
+Sau khi feature branch đã được merge vào `dev`, cập nhật lại local:
+
+```bash
+git checkout dev
+git pull origin dev
+```
+
+Sau đó có thể xóa branch local nếu không dùng nữa:
+
+```bash
+git branch -d feature/<ten-ngan-gon>
+```
+
+### 4. Format commit
 
 Commit message dùng format:
 
@@ -78,7 +217,7 @@ Yêu cầu khi commit:
 - Không commit file tạm, log, cache, dữ liệu lớn hoặc thông tin nhạy cảm.
 - Không gộp nhiều thay đổi không liên quan vào một commit.
 
-### 4. Quy định Pull Request
+### 5. Quy định Pull Request
 
 Mỗi Pull Request phải:
 
@@ -104,7 +243,7 @@ Template mô tả PR:
 - ...
 ```
 
-### 5. Review code trước khi merge
+### 6. Review code trước khi merge
 
 Trước khi merge, PR cần ít nhất 1 thành viên khác review và approve.
 
@@ -124,10 +263,9 @@ Người tạo PR cần:
 - Cập nhật branch nếu `dev` đã thay đổi nhiều.
 - Đảm bảo build/test pass trước khi merge.
 
-### 6. Quy định merge
+### 7. Quy định merge
 
 - Feature branch chỉ được merge vào `dev` sau khi được approve.
 - `dev` chỉ được merge vào `main` khi nhóm thống nhất release/demo.
 - Ưu tiên dùng `Squash and merge` cho feature nhỏ để lịch sử commit gọn hơn.
 - Sau khi merge thành công, có thể xóa branch feature trên remote.
-
