@@ -56,7 +56,7 @@ data/indexes/*
 data/exports/*
 !data/**/.gitkeep
 !data/**/README.md
-
+data/*
 # Search engine artifacts
 *.index
 *.idx
