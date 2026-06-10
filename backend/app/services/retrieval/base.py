@@ -42,10 +42,12 @@ class SearchResult:
     title: str
     snippet: str
     url: str
+    chunk_id: str | int | None = None
     source: str = ""
     topic: str = ""
     author: str = ""
     crawled_at: str | int | float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class SearchEngine(Protocol):

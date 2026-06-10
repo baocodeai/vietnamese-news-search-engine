@@ -111,3 +111,24 @@ def test_bm25_returns_empty_list_when_top_k_is_not_positive():
     engine.build(documents)
 
     assert engine.search("Liverpool", top_k=0) == []
+
+
+def test_bm25_uses_chunk_metadata_for_chunk_results():
+    documents = [
+        SearchDocument(
+            id="22648_4",
+            title="Minh Hang",
+            content="Doanh nhan Nguyen Quoc Bao hon Minh Hang 10 tuoi.",
+            url="https://example.com/minh-hang",
+            combined_unaccented="doanh_nhan nguyen_quoc_bao minh_hang",
+            metadata={"doc_id": "22648", "chunk_id": "22648_4"},
+        )
+    ]
+    engine = BM25SearchEngine()
+    engine.build(documents)
+
+    results = engine.search("Nguyen Quoc Bao Minh Hang", top_k=1)
+
+    assert len(results) == 1
+    assert results[0].doc_id == "22648"
+    assert results[0].chunk_id == "22648_4"

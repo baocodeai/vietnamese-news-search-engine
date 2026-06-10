@@ -118,18 +118,22 @@ class BM25SearchEngine:
         results = []
         for doc_index, score in top_items:
             document = self.documents[doc_index]
+            result_doc_id = document.metadata.get("doc_id", document.id)
+            chunk_id = document.metadata.get("chunk_id")
             results.append(
                 SearchResult(
-                    doc_id=document.id,
+                    doc_id=result_doc_id,
                     score=score,
                     title=clean_display_text(document.title),
                     snippet=clean_display_text(
                         document.content, max_chars=300),
                     url=document.url,
+                    chunk_id=chunk_id,
                     source=document.source,
                     topic=document.topic,
                     author=document.author,
                     crawled_at=document.crawled_at,
+                    metadata=document.metadata,
                 )
             )
 

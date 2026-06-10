@@ -1,0 +1,9 @@
+-r requirements.txt
+
+numpy
+pandas
+pyarrow
+faiss-cpu
+torch
+transformers
+tqdm

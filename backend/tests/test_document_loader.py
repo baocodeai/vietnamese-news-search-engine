@@ -69,3 +69,29 @@ def test_load_documents_from_jsonl_file(tmp_path):
     documents = load_documents(data_path)
 
     assert [document.id for document in documents] == [1, 2]
+
+
+def test_load_documents_maps_chunk_dataset_fields(tmp_path):
+    data_path = tmp_path / "chunks.json"
+    records = [
+        {
+            "doc_id": "22648",
+            "chunk_id": "22648_4",
+            "url": "https://example.com/article",
+            "topic": "showbiz",
+            "raw_text": "Minh H\u00e1\u00ba\u00b1ng v\u00e0 doanh nh\u00c3\u00a2n Nguy\u00e1\u00bb\u2026n Qu\u00e1\u00bb\u2018c B\u00e1\u00ba\u00a3o.",
+            "chunk_processed": "minh_hang doanh_nhan nguyen_quoc_bao",
+            "chunk_unaccented": "minh_hang doanh_nhan nguyen_quoc_bao",
+        }
+    ]
+    data_path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+
+    documents = load_documents(data_path)
+
+    assert len(documents) == 1
+    assert documents[0].id == "22648_4"
+    assert documents[0].metadata["doc_id"] == "22648"
+    assert documents[0].metadata["chunk_id"] == "22648_4"
+    assert documents[0].url == "https://example.com/article"
+    assert documents[0].topic == "showbiz"
+    assert documents[0].combined_unaccented == "minh_hang doanh_nhan nguyen_quoc_bao"

@@ -8,8 +8,11 @@ from backend.app.services.retrieval.base import SearchDocument
 
 DOCUMENT_FIELDS = {
     "id",
+    "doc_id",
+    "chunk_id",
     "title",
     "content",
+    "raw_text",
     "url",
     "source",
     "topic",
@@ -19,6 +22,8 @@ DOCUMENT_FIELDS = {
     "content_processed",
     "combined_processed",
     "combined_unaccented",
+    "chunk_processed",
+    "chunk_unaccented",
 }
 
 
@@ -121,6 +126,31 @@ def record_to_document(item: dict) -> SearchDocument:
     """
     metadata = {key: value for key, value in item.items() if key not in DOCUMENT_FIELDS}
 
+    if "chunk_id" in item:
+        chunk_id = item.get("chunk_id", "")
+        raw_text = fix_mojibake(item.get("raw_text", ""))
+        metadata.update(
+            {
+                "doc_id": item.get("doc_id", ""),
+                "chunk_id": chunk_id,
+            }
+        )
+
+        return SearchDocument(
+            id=chunk_id,
+            title=clean_chunk_title(raw_text),
+            content=raw_text,
+            url=as_text(item.get("url", "")),
+            source=fix_mojibake(item.get("source", "")),
+            topic=fix_mojibake(item.get("topic", "")),
+            author=fix_mojibake(item.get("author", "")),
+            crawled_at=item.get("crawled_at"),
+            content_processed=fix_mojibake(item.get("chunk_processed", "")),
+            combined_processed=fix_mojibake(item.get("chunk_processed", "")),
+            combined_unaccented=fix_mojibake(item.get("chunk_unaccented", "")),
+            metadata=metadata,
+        )
+
     return SearchDocument(
         id=item.get("id", ""),
         title=fix_mojibake(item.get("title", "")),
@@ -136,6 +166,16 @@ def record_to_document(item: dict) -> SearchDocument:
         combined_unaccented=fix_mojibake(item.get("combined_unaccented", "")),
         metadata=metadata,
     )
+
+
+def clean_chunk_title(text: str, max_chars: int = 120) -> str:
+    """
+    Tao title ngan cho chunk khi dataset khong co field title rieng.
+    """
+    text = " ".join(as_text(text).split())
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
 
 
 def load_documents(
