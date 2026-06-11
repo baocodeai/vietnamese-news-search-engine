@@ -61,6 +61,15 @@ export function FilterPanel({ filters, response, onChange, onReset }: FilterPane
         </select>
       </Field>
 
+      <label className="toggle-field">
+        <input
+          type="checkbox"
+          checked={filters.rerank}
+          onChange={(event) => onChange({ ...filters, rerank: event.target.checked })}
+        />
+        <span>Dùng reranker</span>
+      </label>
+
       <div className="date-pair">
         <Field label="Từ ngày">
           <input type="date" value={filters.fromDate} onChange={(event) => onChange({ ...filters, fromDate: event.target.value })} />

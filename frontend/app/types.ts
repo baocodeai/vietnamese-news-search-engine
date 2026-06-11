@@ -12,6 +12,8 @@ export type HighlightBlock = {
 export type SearchExplain = {
   query: string;
   folded_query: string;
+  rerank?: boolean;
+  reranker_model?: string | null;
   raw_fields: string[];
   folded_fields: string[];
   filters: Record<string, string | null>;
@@ -95,6 +97,7 @@ export type DiagnosticsResponse = {
 
 export type SearchFilters = {
   mode: SearchMode;
+  rerank: boolean;
   category: string;
   author: string;
   source: string;

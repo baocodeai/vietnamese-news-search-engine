@@ -141,6 +141,58 @@ def test_search_api_can_use_hybrid_backend(monkeypatch):
     assert payload["results"][0]["metadata"]["matched_modes"]
 
 
+def test_search_api_can_rerank_keyword_results(tmp_path, monkeypatch):
+    class FakeReranker:
+        def rerank(self, query, candidates, top_k=10, batch_size=8):
+            reranked = list(reversed(candidates[:top_k]))
+            for rank, result in enumerate(reranked, start=1):
+                result.metadata["reranked"] = True
+                result.metadata["rerank_rank"] = rank
+                result.metadata["rerank_score"] = 100 - rank
+            return reranked
+
+    data_path = tmp_path / "chunks.json"
+    index_path = tmp_path / "lexical.pkl"
+    records = [
+        {
+            "doc_id": "1",
+            "chunk_id": "1_0",
+            "url": "https://example.com/1",
+            "topic": "news",
+            "raw_text": "Nguyen Quoc Bao va Minh Hang.",
+            "chunk_unaccented": "nguyen_quoc_bao minh_hang",
+        },
+        {
+            "doc_id": "2",
+            "chunk_id": "2_0",
+            "url": "https://example.com/2",
+            "topic": "news",
+            "raw_text": "Nguyen Quoc Bao xuat hien trong su kien.",
+            "chunk_unaccented": "nguyen_quoc_bao su_kien",
+        },
+    ]
+    data_path.write_text(json.dumps(records), encoding="utf-8")
+
+    monkeypatch.setattr(search_route.settings, "lexical_data_path", data_path)
+    monkeypatch.setattr(search_route.settings, "lexical_index_path", index_path)
+    monkeypatch.setattr(search_route.settings, "lexical_build_limit", 10)
+    monkeypatch.setattr(search_route.settings, "search_backend", "keyword")
+    monkeypatch.setattr(search_route.settings, "reranker_top_k", 10)
+    monkeypatch.setattr(search_route, "get_reranker", lambda: FakeReranker())
+    search_route.clear_engine_caches()
+
+    client = TestClient(app)
+    response = client.get(
+        "/search",
+        params={"q": "Nguyen Quoc Bao", "mode": "keyword", "rerank": "true"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["explain"]["rerank"] is True
+    assert payload["results"][0]["metadata"]["reranked"] is True
+
+
 def test_diagnostics_reports_missing_semantic_artifacts(tmp_path, monkeypatch):
     data_path = tmp_path / "chunks.json"
     data_path.write_text("[]", encoding="utf-8")

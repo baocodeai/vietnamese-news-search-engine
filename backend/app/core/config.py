@@ -32,6 +32,15 @@ class Settings:
         "true",
         "yes",
     }
+    reranker_enabled = os.getenv("RERANKER_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    reranker_model = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+    reranker_top_k = int(os.getenv("RERANKER_TOP_K", "50"))
+    reranker_batch_size = int(os.getenv("RERANKER_BATCH_SIZE", "8"))
+    reranker_max_length = int(os.getenv("RERANKER_MAX_LENGTH", "512"))
 
 
 settings = Settings()

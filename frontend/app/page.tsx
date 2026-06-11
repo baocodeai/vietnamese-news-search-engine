@@ -12,6 +12,7 @@ const QUICK_QUERIES = ["giá vàng", "nga ukraine", "địa phương điểm thi
 
 const INITIAL_FILTERS: SearchFilters = {
   mode: "keyword",
+  rerank: false,
   category: "",
   author: "",
   source: "",

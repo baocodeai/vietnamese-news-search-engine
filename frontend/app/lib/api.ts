@@ -27,6 +27,7 @@ export async function fetchSearch(
   const url = new URL(`${API_BASE_URL}/search`);
   url.searchParams.set("q", query);
   url.searchParams.set("mode", filters.mode);
+  if (filters.rerank) url.searchParams.set("rerank", "true");
   url.searchParams.set("page", String(page));
   url.searchParams.set("page_size", "10");
   url.searchParams.set("sort", filters.sort);
@@ -38,9 +39,21 @@ export async function fetchSearch(
 
   const response = await fetch(url.toString(), { cache: "no-store", signal });
   if (!response.ok) {
-    throw new Error(`Search request failed with ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   return response.json();
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = await response.json();
+    if (typeof payload?.detail === "string") {
+      return payload.detail;
+    }
+  } catch {
+    // Fall back to the generic HTTP status message below.
+  }
+  return `Search request failed with ${response.status}`;
 }
 
 export async function fetchSuggestions(query: string, signal?: AbortSignal): Promise<string[]> {

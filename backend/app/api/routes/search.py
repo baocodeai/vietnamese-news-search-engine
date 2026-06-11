@@ -18,6 +18,7 @@ from backend.app.services.indexing.lexical_index import (
 from backend.app.services.preprocessing.text_normalizer import normalize_text
 from backend.app.services.retrieval.base import SearchDocument, SearchResult
 from backend.app.services.retrieval.hybrid_engine import HybridSearchEngine
+from backend.app.services.retrieval.reranker import Reranker
 from backend.app.services.retrieval.semantic_engine import SemanticSearchEngine
 
 
@@ -117,10 +118,53 @@ def _assert_artifacts_exist(paths: dict[str, Path]) -> None:
 
 
 def clear_engine_caches() -> None:
-    for cached_function in (get_search_engine, get_keyword_engine, get_semantic_engine):
+    for cached_function in (
+        get_search_engine,
+        get_keyword_engine,
+        get_semantic_engine,
+        get_reranker,
+    ):
         cache_clear = getattr(cached_function, "cache_clear", None)
         if cache_clear is not None:
             cache_clear()
+
+
+@lru_cache(maxsize=1)
+def get_reranker() -> Reranker:
+    try:
+        reranker = Reranker(
+            model_name=settings.reranker_model,
+            max_length=settings.reranker_max_length,
+        )
+    except RuntimeError as exc:
+        logger.exception("failed to load reranker model=%s", settings.reranker_model)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("loaded reranker model=%s", settings.reranker_model)
+    return reranker
+
+
+def should_rerank(rerank: bool | None) -> bool:
+    return settings.reranker_enabled if rerank is None else rerank
+
+
+def maybe_rerank_results(
+    *,
+    query: str,
+    results: list[SearchResult],
+    top_k: int,
+    rerank: bool | None,
+) -> tuple[list[SearchResult], bool]:
+    if not should_rerank(rerank) or not query or not results:
+        return results[:top_k], False
+
+    candidates = results[: max(top_k, settings.reranker_top_k)]
+    reranked = get_reranker().rerank(
+        query=query,
+        candidates=candidates,
+        top_k=top_k,
+        batch_size=settings.reranker_batch_size,
+    )
+    return reranked, True
 
 
 def get_search_mode(mode: str = "") -> str:
@@ -232,9 +276,13 @@ def apply_filters(
 @router.get("/search")
 def search(
     q: str = Query("", alias="q"),
-    mode: str = Query("", description="Search mode: keyword or semantic."),
+    mode: str = Query("", description="Search mode: keyword, semantic, or hybrid."),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=50),
+    rerank: bool | None = Query(
+        None,
+        description="Optionally rerank keyword, semantic, or hybrid candidates.",
+    ),
     sort: str = Query("relevance"),
     category: str = Query(""),
     author: str = Query(""),
@@ -251,16 +299,26 @@ def search(
         offset = (page - 1) * page_size
 
         if query:
+            rerank_enabled = should_rerank(rerank)
             candidate_k = max(offset + page_size * 5, 200)
+            if rerank_enabled:
+                candidate_k = max(candidate_k, offset + settings.reranker_top_k)
             raw_results = engine.search(query, top_k=candidate_k)
             filtered_results = apply_filters(raw_results, category, author, source)
             total = len(filtered_results)
+            filtered_results, did_rerank = maybe_rerank_results(
+                query=query,
+                results=filtered_results,
+                top_k=max(offset + page_size, page_size),
+                rerank=rerank,
+            )
             page_results = filtered_results[offset: offset + page_size]
             payload_results = [
                 result_to_payload(result, str(result.chunk_id or result.doc_id), offset + index + 1)
                 for index, result in enumerate(page_results)
             ]
         else:
+            did_rerank = False
             filtered_documents = [
                 document for document in documents
                 if (not category or document.topic == category)
@@ -294,6 +352,8 @@ def search(
             "explain": {
                 "query": query,
                 "folded_query": normalize_text(query),
+                "rerank": did_rerank,
+                "reranker_model": settings.reranker_model if did_rerank else None,
                 "raw_fields": ["title", "content", "raw_text"],
                 "folded_fields": ["chunk_processed", "chunk_unaccented", "combined_unaccented"],
                 "filters": {
@@ -378,6 +438,13 @@ def diagnostics() -> dict[str, Any]:
                 "ready": keyword_ready and semantic["ready"],
                 "require_semantic": settings.hybrid_require_semantic,
                 "rrf_k": settings.hybrid_rrf_k,
+            },
+            "reranker": {
+                "enabled_by_default": settings.reranker_enabled,
+                "model": settings.reranker_model,
+                "top_k": settings.reranker_top_k,
+                "batch_size": settings.reranker_batch_size,
+                "max_length": settings.reranker_max_length,
             },
         },
         "reports": {
