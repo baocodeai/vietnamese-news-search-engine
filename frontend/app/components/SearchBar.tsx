@@ -51,7 +51,7 @@ export function SearchBar({
             autoComplete="off"
           />
         </label>
-        <button className="primary-action" type="submit" disabled={loading}>
+        <button className="primary-action" type="submit">
           {loading ? "Đang tìm" : "Tìm kiếm"}
         </button>
       </form>

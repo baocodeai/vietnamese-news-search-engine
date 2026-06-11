@@ -24,11 +24,12 @@ export function ResultCard({ result, rank, onOpen }: ResultCardProps) {
           rel="noreferrer"
           className="result-heading"
           onClick={() => onOpen(result.id, rank)}
-        >
-          {result.title}
-        </a>
-        <p className="result-summary">{result.summary}</p>
-        <p className="result-highlight" dangerouslySetInnerHTML={renderHighlight(result)} />
+          dangerouslySetInnerHTML={renderHighlightedText(result.highlight?.title?.[0] || result.title)}
+        />
+        <p
+          className={result.highlight?.summary?.[0] ? "result-highlight" : "result-summary"}
+          dangerouslySetInnerHTML={renderHighlightedText(result.highlight?.summary?.[0] || result.summary)}
+        />
         <div className="result-actions">
           <span>Kết quả phù hợp</span>
           <a href={result.url} target="_blank" rel="noreferrer" onClick={() => onOpen(result.id, rank)}>
@@ -66,12 +67,6 @@ function sanitizeHighlight(value: string) {
     .replaceAll("&lt;/em&gt;", "</em>");
 }
 
-function renderHighlight(result: SearchResult) {
-  const highlight =
-    result.highlight?.title?.[0] ||
-    result.highlight?.summary?.[0] ||
-    result.highlight?.content?.[0] ||
-    result.summary;
-
-  return { __html: sanitizeHighlight(highlight) };
+function renderHighlightedText(value: string) {
+  return { __html: sanitizeHighlight(value) };
 }

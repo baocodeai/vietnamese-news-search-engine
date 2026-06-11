@@ -3,6 +3,7 @@ from functools import lru_cache
 import json
 import logging
 from pathlib import Path
+import re
 import time
 from typing import Any
 
@@ -15,7 +16,7 @@ from backend.app.services.indexing.lexical_index import (
     load_lexical_index,
     save_lexical_index,
 )
-from backend.app.services.preprocessing.text_normalizer import normalize_text
+from backend.app.services.preprocessing.text_normalizer import normalize_text, strip_accents, tokenize
 from backend.app.services.retrieval.base import SearchDocument, SearchResult
 from backend.app.services.retrieval.hybrid_engine import HybridSearchEngine
 from backend.app.services.retrieval.reranker import Reranker
@@ -175,8 +176,16 @@ def get_documents(engine: Any) -> list[SearchDocument]:
     return list(getattr(engine, "documents", []))
 
 
-def result_to_payload(result: SearchResult, result_id: str, rank: int) -> dict[str, Any]:
+def result_to_payload(
+    result: SearchResult,
+    result_id: str,
+    rank: int,
+    *,
+    query: str = "",
+    highlight: bool = False,
+) -> dict[str, Any]:
     metadata = result.metadata or {}
+    highlighted = make_keyword_highlight(result, query) if highlight else None
     return {
         "id": result_id,
         "doc_id": str(result.doc_id),
@@ -189,9 +198,7 @@ def result_to_payload(result: SearchResult, result_id: str, rank: int) -> dict[s
         "author": result.author or "",
         "source": result.source or source_from_url(result.url),
         "published_at": normalize_timestamp(result.crawled_at),
-        "highlight": {
-            "summary": [result.snippet],
-        },
+        "highlight": highlighted,
         "rank": rank,
         "metadata": metadata,
     }
@@ -254,6 +261,78 @@ def make_facets(documents: list[SearchDocument]) -> dict[str, list[dict[str, Any
     }
 
 
+def make_keyword_highlight(result: SearchResult, query: str) -> dict[str, list[str]] | None:
+    query_tokens = [
+        token for token in dict.fromkeys(tokenize(query))
+        if len(token) > 1
+    ]
+    if not query_tokens:
+        return None
+
+    highlighted_title = highlight_text(result.title, query_tokens)
+    highlighted_summary = highlight_text(result.snippet, query_tokens)
+    payload: dict[str, list[str]] = {}
+
+    if highlighted_title != result.title:
+        payload["title"] = [highlighted_title]
+    if highlighted_summary != result.snippet:
+        payload["summary"] = [highlighted_summary]
+
+    return payload or None
+
+
+def highlight_text(text: str, query_tokens: list[str]) -> str:
+    folded_text, position_map = fold_text_with_positions(text)
+    spans: list[tuple[int, int]] = []
+
+    for token in query_tokens:
+        pattern = re.compile(rf"(?<![0-9a-zA-Z_]){re.escape(token)}(?![0-9a-zA-Z_])")
+        for match in pattern.finditer(folded_text):
+            start = position_map[match.start()]
+            end = position_map[match.end() - 1] + 1
+            spans.append((start, end))
+
+    if not spans:
+        return text
+
+    merged_spans = merge_spans(spans)
+    parts: list[str] = []
+    cursor = 0
+    for start, end in merged_spans:
+        if start < cursor:
+            continue
+        parts.append(text[cursor:start])
+        parts.append("<em>")
+        parts.append(text[start:end])
+        parts.append("</em>")
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def fold_text_with_positions(text: str) -> tuple[str, list[int]]:
+    folded_chars: list[str] = []
+    position_map: list[int] = []
+
+    for index, char in enumerate(text):
+        folded = strip_accents(char).lower()
+        for folded_char in folded:
+            folded_chars.append(folded_char)
+            position_map.append(index)
+
+    return "".join(folded_chars), position_map
+
+
+def merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
 def apply_filters(
     results: list[SearchResult],
     category: str,
@@ -271,6 +350,41 @@ def apply_filters(
             continue
         filtered.append(result)
     return filtered
+
+
+def deduplicate_results_by_document(results: list[SearchResult]) -> list[SearchResult]:
+    deduplicated: list[SearchResult] = []
+    seen_documents: set[str] = set()
+
+    for result in results:
+        document_key = str(result.doc_id or result.chunk_id or "")
+        if not document_key:
+            deduplicated.append(result)
+            continue
+        if document_key in seen_documents:
+            continue
+        seen_documents.add(document_key)
+        deduplicated.append(result)
+
+    return deduplicated
+
+
+def deduplicate_documents_by_document(documents: list[SearchDocument]) -> list[SearchDocument]:
+    deduplicated: list[SearchDocument] = []
+    seen_documents: set[str] = set()
+
+    for document in documents:
+        metadata = document.metadata or {}
+        document_key = str(metadata.get("doc_id") or document.id or "")
+        if not document_key:
+            deduplicated.append(document)
+            continue
+        if document_key in seen_documents:
+            continue
+        seen_documents.add(document_key)
+        deduplicated.append(document)
+
+    return deduplicated
 
 
 @router.get("/search")
@@ -304,7 +418,9 @@ def search(
             if rerank_enabled:
                 candidate_k = max(candidate_k, offset + settings.reranker_top_k)
             raw_results = engine.search(query, top_k=candidate_k)
-            filtered_results = apply_filters(raw_results, category, author, source)
+            filtered_results = deduplicate_results_by_document(
+                apply_filters(raw_results, category, author, source)
+            )
             total = len(filtered_results)
             filtered_results, did_rerank = maybe_rerank_results(
                 query=query,
@@ -314,17 +430,25 @@ def search(
             )
             page_results = filtered_results[offset: offset + page_size]
             payload_results = [
-                result_to_payload(result, str(result.chunk_id or result.doc_id), offset + index + 1)
+                result_to_payload(
+                    result,
+                    str(result.chunk_id or result.doc_id),
+                    offset + index + 1,
+                    query=query,
+                    highlight=selected_mode in {"keyword", "hybrid"},
+                )
                 for index, result in enumerate(page_results)
             ]
         else:
             did_rerank = False
-            filtered_documents = [
-                document for document in documents
-                if (not category or document.topic == category)
-                and (not author or document.author == author)
-                and (not source or (document.source or source_from_url(document.url)) == source)
-            ]
+            filtered_documents = deduplicate_documents_by_document(
+                [
+                    document for document in documents
+                    if (not category or document.topic == category)
+                    and (not author or document.author == author)
+                    and (not source or (document.source or source_from_url(document.url)) == source)
+                ]
+            )
             total = len(filtered_documents)
             page_documents = filtered_documents[offset: offset + page_size]
             payload_results = [

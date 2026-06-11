@@ -48,7 +48,9 @@ class SemanticSearchEngine:
         if self.query_encoder is None and self.config:
             self.query_encoder = self._create_e5_query_encoder()
 
-        self.documents = self._metadata_to_documents(self.metadata)
+        # Do not materialize every semantic metadata row as SearchDocument here.
+        # The semantic corpus can be large, and duplicating metadata as Python
+        # objects adds a large RAM spike before any query is served.
 
     @classmethod
     def from_artifacts(

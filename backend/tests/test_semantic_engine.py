@@ -32,6 +32,8 @@ def test_semantic_engine_returns_results_from_metadata():
         query_encoder=lambda texts: [[0.0]],
     )
 
+    assert engine.documents == []
+
     results = engine.search("cuop tiem vang", top_k=1)
 
     assert len(results) == 1

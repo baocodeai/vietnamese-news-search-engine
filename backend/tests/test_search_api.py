@@ -38,6 +38,9 @@ def test_search_api_returns_lexical_results(tmp_path, monkeypatch):
     assert payload["results"][0]["doc_id"] == "22648"
     assert payload["results"][0]["chunk_id"] == "22648_4"
     assert payload["results"][0]["score"] > 0
+    assert "<em>Nguyen</em>" in payload["results"][0]["highlight"]["summary"][0]
+    assert "<em>Quoc</em>" in payload["results"][0]["highlight"]["summary"][0]
+    assert "<em>Bao</em>" in payload["results"][0]["highlight"]["summary"][0]
 
 
 def test_diagnostics_api_reports_index_state(tmp_path, monkeypatch):
@@ -93,6 +96,55 @@ def test_search_api_can_use_semantic_backend(monkeypatch):
 
     monkeypatch.setattr(search_route.settings, "search_backend", "lexical")
     search_route.clear_engine_caches()
+
+
+def test_search_api_deduplicates_chunk_results_by_document(monkeypatch):
+    class FakeEngine:
+        documents = []
+
+        def search(self, query, top_k=10):
+            return [
+                SearchResult(
+                    doc_id="2",
+                    chunk_id="2_0",
+                    score=0.91,
+                    title="Cuop tiem vang",
+                    snippet="Chunk dau tien cua cung mot bai.",
+                    url="https://example.com/crime",
+                    topic="Phap luat",
+                ),
+                SearchResult(
+                    doc_id="2",
+                    chunk_id="2_1",
+                    score=0.87,
+                    title="Cuop tiem vang",
+                    snippet="Chunk thu hai cua cung mot bai.",
+                    url="https://example.com/crime",
+                    topic="Phap luat",
+                ),
+                SearchResult(
+                    doc_id="3",
+                    chunk_id="3_0",
+                    score=0.71,
+                    title="Gia vang",
+                    snippet="Mot bai khac.",
+                    url="https://example.com/gold",
+                    topic="Kinh te",
+                ),
+            ]
+
+    monkeypatch.setattr(search_route.settings, "search_backend", "keyword")
+    monkeypatch.setattr(search_route, "get_search_engine", lambda mode="": FakeEngine())
+    search_route.clear_engine_caches()
+
+    client = TestClient(app)
+    response = client.get("/search", params={"q": "vang", "page_size": 10})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert [result["doc_id"] for result in payload["results"]] == ["2", "3"]
+    assert payload["results"][0]["chunk_id"] == "2_0"
 
 
 def test_search_api_can_use_hybrid_backend(monkeypatch):

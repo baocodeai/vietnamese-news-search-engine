@@ -37,11 +37,18 @@ export async function fetchSearch(
   if (filters.fromDate) url.searchParams.set("from_date", filters.fromDate);
   if (filters.toDate) url.searchParams.set("to_date", filters.toDate);
 
-  const response = await fetch(url.toString(), { cache: "no-store", signal });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
+  try {
+    const response = await fetch(url.toString(), { cache: "no-store", signal });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
+    }
+    return response.json();
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    throw error;
   }
-  return response.json();
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -59,10 +66,21 @@ async function readErrorMessage(response: Response): Promise<string> {
 export async function fetchSuggestions(query: string, signal?: AbortSignal): Promise<string[]> {
   const url = new URL(`${API_BASE_URL}/suggest`);
   url.searchParams.set("q", query);
-  const response = await fetch(url.toString(), { cache: "no-store", signal });
-  if (!response.ok) return [];
-  const data = (await response.json()) as SuggestResponse;
-  return data.suggestions.map((item) => item.text);
+  try {
+    const response = await fetch(url.toString(), { cache: "no-store", signal });
+    if (!response.ok) return [];
+    const data = (await response.json()) as SuggestResponse;
+    return data.suggestions.map((item) => item.text);
+  } catch (error) {
+    if (isAbortError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export async function fetchDiagnostics(signal?: AbortSignal): Promise<DiagnosticsResponse | null> {

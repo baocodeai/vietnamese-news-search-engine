@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FilterPanel } from "./components/FilterPanel";
 import { ResultList } from "./components/ResultList";
 import { SearchBar } from "./components/SearchBar";
-import { fetchSearch, fetchSuggestions, INITIAL_SEARCH_RESPONSE, trackClick } from "./lib/api";
+import { fetchSearch, fetchSuggestions, INITIAL_SEARCH_RESPONSE, isAbortError, trackClick } from "./lib/api";
 import type { SearchFilters, SearchResponse } from "./types";
 
 const QUICK_QUERIES = ["giá vàng", "nga ukraine", "địa phương điểm thi", "việt nam", "công an huế"];
@@ -30,6 +30,7 @@ export default function HomePage() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const searchRequestId = useRef(0);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(response.total / response.page_size)),
@@ -54,19 +55,36 @@ export default function HomePage() {
   }, [query]);
 
   useEffect(() => {
-    void runSearch(page, submittedQuery, filters);
+    const controller = new AbortController();
+    const requestId = searchRequestId.current + 1;
+    searchRequestId.current = requestId;
+
+    void runSearch(page, submittedQuery, filters, controller.signal, requestId);
+
+    return () => {
+      controller.abort();
+    };
   }, [page, filters, submittedQuery]);
 
-  async function runSearch(nextPage: number, nextQuery: string, nextFilters: SearchFilters) {
+  async function runSearch(
+    nextPage: number,
+    nextQuery: string,
+    nextFilters: SearchFilters,
+    signal: AbortSignal,
+    requestId: number,
+  ) {
     setLoading(true);
     setError("");
     try {
-      const data = await fetchSearch(nextQuery, nextFilters, nextPage);
+      const data = await fetchSearch(nextQuery, nextFilters, nextPage, signal);
+      if (searchRequestId.current !== requestId) return;
       setResponse(data);
     } catch (err) {
+      if (isAbortError(err) || searchRequestId.current !== requestId) return;
       setResponse(INITIAL_SEARCH_RESPONSE);
       setError(err instanceof Error ? err.message : "Không thể kết nối dịch vụ tìm kiếm.");
     } finally {
+      if (searchRequestId.current !== requestId) return;
       setLoading(false);
     }
   }
@@ -75,6 +93,7 @@ export default function HomePage() {
     const trimmed = nextQuery.trim();
     setQuery(trimmed);
     setSubmittedQuery(trimmed);
+    setResponse(INITIAL_SEARCH_RESPONSE);
     setPage(1);
   }
 
