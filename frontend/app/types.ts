@@ -52,6 +52,8 @@ export type SearchResponse = {
     source: FacetItem[];
   };
   explain?: SearchExplain | null;
+  /** True khi E5 model dang duoc load lan dau — frontend nen hien thi loading va tu retry. */
+  semantic_loading?: boolean;
 };
 
 export type SuggestResponse = {

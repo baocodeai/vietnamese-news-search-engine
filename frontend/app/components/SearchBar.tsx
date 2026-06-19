@@ -6,6 +6,7 @@ type SearchBarProps = {
   suggestions: string[];
   quickQueries: string[];
   loading: boolean;
+  semanticLoading: boolean;
   onQueryChange: (value: string) => void;
   onModeChange: (mode: SearchMode) => void;
   onSubmit: (value: string) => void;
@@ -17,6 +18,7 @@ export function SearchBar({
   suggestions,
   quickQueries,
   loading,
+  semanticLoading,
   onQueryChange,
   onModeChange,
   onSubmit,
@@ -34,6 +36,12 @@ export function SearchBar({
           Hybrid
         </ModeButton>
       </div>
+      {semanticLoading && (mode === "semantic" || mode === "hybrid") ? (
+        <div className="semantic-loading-badge" role="status" aria-live="polite">
+          <span className="loading-dot" />
+          <span>Đang tải model AI (E5)... lần đầu có thể mất 30–60 giây. Sẽ tự tìm kiếm khi sẵn sàng.</span>
+        </div>
+      ) : null}
 
       <form
         className="command-form"

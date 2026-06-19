@@ -10,6 +10,7 @@ type ResultListProps = {
   totalPages: number;
   onPageChange: (page: number) => void;
   onOpen: (articleId: string, position: number) => void;
+  semanticLoading: boolean;
 };
 
 export function ResultList({
@@ -21,6 +22,7 @@ export function ResultList({
   totalPages,
   onPageChange,
   onOpen,
+  semanticLoading,
 }: ResultListProps) {
   return (
     <section className="results-workspace" aria-busy={loading}>
@@ -39,11 +41,16 @@ export function ResultList({
         <span>kết quả phù hợp</span>
       </div>
 
-      {loading ? (
+      {semanticLoading ? (
+        <StatusCard
+          title="⏳ Đang tải model AI (E5)..."
+          description="Lần đầu sử dụng Semantic Search, model cần 30–60 giây để khởi động. Sẽ tự động tìm kiếm khi sẵn sàng."
+        />
+      ) : loading ? (
         <StatusCard title="Đang tìm kiếm" description="Hệ thống đang lọc và sắp xếp các bài viết phù hợp." />
       ) : null}
-      {!loading && error ? <StatusCard title="Không kết nối được dịch vụ" description={error} /> : null}
-      {!loading && !error && response.results.length === 0 ? (
+      {!semanticLoading && !loading && error ? <StatusCard title="Không kết nối được dịch vụ" description={error} /> : null}
+      {!semanticLoading && !loading && !error && response.results.length === 0 ? (
         <StatusCard title="Không có kết quả phù hợp" description="Thử đổi truy vấn, bỏ bớt bộ lọc hoặc dùng từ khóa không dấu." />
       ) : null}
 

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FilterPanel } from "./components/FilterPanel";
 import { ResultList } from "./components/ResultList";
 import { SearchBar } from "./components/SearchBar";
-import { fetchSearch, fetchSuggestions, INITIAL_SEARCH_RESPONSE, isAbortError, trackClick } from "./lib/api";
+import { fetchSearch, fetchSuggestions, INITIAL_SEARCH_RESPONSE, isAbortError, trackClick, triggerSemanticWarmup, fetchSemanticStatus } from "./lib/api";
 import type { SearchFilters, SearchResponse } from "./types";
 
 const QUICK_QUERIES = ["giá vàng", "nga ukraine", "địa phương điểm thi", "việt nam", "công an huế"];
@@ -26,10 +26,13 @@ export default function HomePage() {
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [filters, setFilters] = useState<SearchFilters>(INITIAL_FILTERS);
   const [page, setPage] = useState(1);
+  const [searchNonce, setSearchNonce] = useState(0);
   const [response, setResponse] = useState<SearchResponse>(INITIAL_SEARCH_RESPONSE);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [semanticLoading, setSemanticLoading] = useState(false);
+  const semanticRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestId = useRef(0);
 
   const totalPages = useMemo(
@@ -54,6 +57,27 @@ export default function HomePage() {
     };
   }, [query]);
 
+  // Khi nhan duoc response co semantic_loading=true:
+  // hien thi thong bao va tu dong retry sau 3 giay
+  useEffect(() => {
+    if (response.semantic_loading) {
+      setSemanticLoading(true);
+      if (semanticRetryRef.current) clearTimeout(semanticRetryRef.current);
+      semanticRetryRef.current = setTimeout(() => {
+        setSearchNonce((value) => value + 1);
+      }, 3000);
+    } else {
+      setSemanticLoading(false);
+      if (semanticRetryRef.current) {
+        clearTimeout(semanticRetryRef.current);
+        semanticRetryRef.current = null;
+      }
+    }
+    return () => {
+      if (semanticRetryRef.current) clearTimeout(semanticRetryRef.current);
+    };
+  }, [response.semantic_loading]);
+
   useEffect(() => {
     const controller = new AbortController();
     const requestId = searchRequestId.current + 1;
@@ -64,7 +88,7 @@ export default function HomePage() {
     return () => {
       controller.abort();
     };
-  }, [page, filters, submittedQuery]);
+  }, [page, filters, submittedQuery, searchNonce]);
 
   async function runSearch(
     nextPage: number,
@@ -95,11 +119,17 @@ export default function HomePage() {
     setSubmittedQuery(trimmed);
     setResponse(INITIAL_SEARCH_RESPONSE);
     setPage(1);
+    setSearchNonce((value) => value + 1);
   }
 
   function updateFilters(nextFilters: SearchFilters) {
     setFilters(nextFilters);
     setPage(1);
+    // Khi chuyen sang semantic/hybrid, kich hoat warmup ngay
+    // de model bat dau load truoc khi co query
+    if (nextFilters.mode === "semantic" || nextFilters.mode === "hybrid") {
+      void triggerSemanticWarmup();
+    }
   }
 
   function resetFilters() {
@@ -136,6 +166,7 @@ export default function HomePage() {
             onQueryChange={setQuery}
             onModeChange={(mode) => updateFilters({ ...filters, mode })}
             onSubmit={submitSearch}
+            semanticLoading={semanticLoading}
           />
           <ResultList
             response={response}
@@ -146,6 +177,7 @@ export default function HomePage() {
             totalPages={totalPages}
             onPageChange={setPage}
             onOpen={(articleId, position) => trackClick(articleId, submittedQuery, position)}
+            semanticLoading={semanticLoading}
           />
         </div>
       </section>

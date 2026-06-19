@@ -1,6 +1,7 @@
 import type { DiagnosticsResponse, SearchFilters, SearchResponse, SuggestResponse } from "../types";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+// Dung duong dan tuong doi /api de Next.js proxy toi backend (tranh CORS)
+export const API_BASE_URL = "/api";
 
 export const INITIAL_SEARCH_RESPONSE: SearchResponse = {
   query: "",
@@ -24,21 +25,23 @@ export async function fetchSearch(
   page: number,
   signal?: AbortSignal,
 ): Promise<SearchResponse> {
-  const url = new URL(`${API_BASE_URL}/search`);
-  url.searchParams.set("q", query);
-  url.searchParams.set("mode", filters.mode);
-  if (filters.rerank) url.searchParams.set("rerank", "true");
-  url.searchParams.set("page", String(page));
-  url.searchParams.set("page_size", "10");
-  url.searchParams.set("sort", filters.sort);
-  if (filters.category) url.searchParams.set("category", filters.category);
-  if (filters.author) url.searchParams.set("author", filters.author);
-  if (filters.source) url.searchParams.set("source", filters.source);
-  if (filters.fromDate) url.searchParams.set("from_date", filters.fromDate);
-  if (filters.toDate) url.searchParams.set("to_date", filters.toDate);
+  // Dung URLSearchParams thay vi new URL() de tuong thich voi ca duong dan
+  // tuong doi (/api) lan URL tuyet doi (http://...)
+  const params = new URLSearchParams();
+  params.set("q", query);
+  params.set("mode", filters.mode);
+  if (filters.rerank) params.set("rerank", "true");
+  params.set("page", String(page));
+  params.set("page_size", "10");
+  params.set("sort", filters.sort);
+  if (filters.category) params.set("category", filters.category);
+  if (filters.author) params.set("author", filters.author);
+  if (filters.source) params.set("source", filters.source);
+  if (filters.fromDate) params.set("from_date", filters.fromDate);
+  if (filters.toDate) params.set("to_date", filters.toDate);
 
   try {
-    const response = await fetch(url.toString(), { cache: "no-store", signal });
+    const response = await fetch(`${API_BASE_URL}/search?${params}`, { cache: "no-store", signal });
     if (!response.ok) {
       throw new Error(await readErrorMessage(response));
     }
@@ -64,10 +67,9 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 export async function fetchSuggestions(query: string, signal?: AbortSignal): Promise<string[]> {
-  const url = new URL(`${API_BASE_URL}/suggest`);
-  url.searchParams.set("q", query);
+  const params = new URLSearchParams({ q: query });
   try {
-    const response = await fetch(url.toString(), { cache: "no-store", signal });
+    const response = await fetch(`${API_BASE_URL}/suggest?${params}`, { cache: "no-store", signal });
     if (!response.ok) return [];
     const data = (await response.json()) as SuggestResponse;
     return data.suggestions.map((item) => item.text);
@@ -90,6 +92,24 @@ export async function fetchDiagnostics(signal?: AbortSignal): Promise<Diagnostic
     return response.json();
   } catch {
     return null;
+  }
+}
+
+export async function fetchSemanticStatus(): Promise<{ ready: boolean; loading: boolean }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/semantic/status`, { cache: "no-store" });
+    if (!response.ok) return { ready: false, loading: false };
+    return response.json();
+  } catch {
+    return { ready: false, loading: false };
+  }
+}
+
+export async function triggerSemanticWarmup(): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/semantic/warmup`, { method: "POST", cache: "no-store" });
+  } catch {
+    // Ignore — warmup la best-effort
   }
 }
 
