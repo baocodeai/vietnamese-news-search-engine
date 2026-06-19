@@ -1,5 +1,48 @@
 # Vietnamese News Search Engine
 
+## Demo Operation Guide
+
+Install backend dependencies:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-semantic.txt
+```
+
+Build keyword index:
+
+```bash
+conda run -n searchengine python scripts/build_lexical_index.py --limit 1000
+```
+
+Build semantic E5 + FAISS index:
+
+```bash
+conda run -n searchengine python scripts/build_semantic_index.py --limit 1000
+```
+
+Search semantic artifact from CLI:
+
+```bash
+conda run -n searchengine python scripts/search_semantic_index.py --query "cuop tiem vang" --top-k 5
+```
+
+Run backend:
+
+```bash
+conda run -n searchengine uvicorn backend.app.main:app --reload
+```
+
+Run frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The search API accepts `mode=keyword|semantic|hybrid`. The UI exposes the same modes in the search bar. `keyword` is the default and does not require semantic dependencies or artifacts. `semantic` and `hybrid` require the semantic artifacts in `data/embeddings/e5_base`.
+
 Dự án xây dựng search engine cho báo tiếng Việt của nhóm 5 thành viên: Bảo, Tài, Vinh, Duy, Phúc.
 
 ## Quy định Git Workflow
