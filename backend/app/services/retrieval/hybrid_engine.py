@@ -62,7 +62,7 @@ class HybridSearchEngine:
         mode: str,
     ) -> None:
         for rank, result in enumerate(results, start=1):
-            key = str(result.doc_id or result.chunk_id)
+            key = str(result.chunk_id or result.doc_id)
             if not key:
                 continue
 

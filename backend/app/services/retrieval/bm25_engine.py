@@ -99,9 +99,15 @@ class BM25SearchEngine:
         if not query_tokens or not self.documents or self.avgdl == 0:
             return []
 
-        scores = defaultdict(float)
+        query_terms = self._select_query_terms(query_tokens)
+        min_matched_terms = self._min_matched_terms(query_terms)
+        if not query_terms or min_matched_terms <= 0:
+            return []
 
-        for term in set(query_tokens):
+        scores = defaultdict(float)
+        matched_terms: defaultdict[int, set[str]] = defaultdict(set)
+
+        for term in query_terms:
             postings = self.inverted_index.get(term, [])
             idf = self.idf.get(term, 0.0)
 
@@ -111,9 +117,16 @@ class BM25SearchEngine:
                     1 - self.b + self.b * doc_length / self.avgdl
                 )
                 scores[doc_index] += idf * (tf * (self.k1 + 1)) / denominator
+                matched_terms[doc_index].add(term)
+
+        filtered_scores = {
+            doc_index: score
+            for doc_index, score in scores.items()
+            if len(matched_terms[doc_index]) >= min_matched_terms
+        }
 
         top_items = heapq.nlargest(
-            top_k, scores.items(), key=lambda item: item[1])
+            top_k, filtered_scores.items(), key=lambda item: item[1])
 
         results = []
         for doc_index, score in top_items:
@@ -138,3 +151,18 @@ class BM25SearchEngine:
             )
 
         return results
+
+    def _select_query_terms(self, query_tokens: list[str]) -> list[str]:
+        unique_terms = list(dict.fromkeys(query_tokens))
+        if len(unique_terms) <= 1:
+            return unique_terms
+
+        informative_terms = [term for term in unique_terms if len(term) >= 3]
+        if len(unique_terms) >= 3 and len(informative_terms) < 2:
+            return []
+        return informative_terms or unique_terms
+
+    def _min_matched_terms(self, query_terms: list[str]) -> int:
+        if len(query_terms) <= 1:
+            return len(query_terms)
+        return math.ceil(len(query_terms) * 0.7)

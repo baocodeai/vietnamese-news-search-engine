@@ -21,6 +21,9 @@ def build_semantic_index(
     shard_size: int = 10_000,
     limit: int | None = None,
     encoder: Any | None = None,
+    use_ivf: bool = False,
+    nlist: int = 256,
+    nprobe: int = 32,
 ) -> dict[str, Any]:
     """
     Build full semantic artifacts tu corpus chunks.
@@ -31,6 +34,15 @@ def build_semantic_index(
     - semantic_e5_base.faiss
     - chunks_metadata.parquet
     - embedding_config.json
+
+    Args:
+        use_ivf:  Dung IndexIVFFlat thay vi IndexFlatIP.
+                  Giam RAM khi serve tu ~1.7GB xuong ~400MB.
+                  Can rebuild index neu thay doi tham so nay.
+        nlist:    So luong Voronoi cells (clusters) cho IVF. Mac dinh 256.
+                  Nen chon: nlist ~ 4 * sqrt(num_vectors).
+        nprobe:   So cells duoc quet khi query. Mac dinh 32.
+                  Cao hon -> chinh xac hon nhung cham hon.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -49,7 +61,12 @@ def build_semantic_index(
         shard_size=shard_size,
         limit=limit,
     )
-    index, metadata = build_faiss_index_from_shards(output_dir)
+    index, metadata = build_faiss_index_from_shards(
+        output_dir,
+        use_ivf=use_ivf,
+        nlist=nlist,
+        nprobe=nprobe,
+    )
 
     index_path = output_dir / "semantic_e5_base.faiss"
     metadata_path = output_dir / "chunks_metadata.parquet"
@@ -66,6 +83,9 @@ def build_semantic_index(
         "max_length": max_length,
         "normalize_embeddings": True,
         "faiss_metric": "inner_product",
+        "faiss_index_type": "IVFFlat" if use_ivf else "FlatIP",
+        "faiss_nlist": nlist if use_ivf else None,
+        "faiss_nprobe": nprobe if use_ivf else None,
         "embedding_dim": int(index.d),
         "num_vectors": int(index.ntotal),
     }
@@ -83,7 +103,24 @@ def build_semantic_index(
     }
 
 
-def build_faiss_index_from_shards(output_dir: str | Path):
+def build_faiss_index_from_shards(
+    output_dir: str | Path,
+    *,
+    use_ivf: bool = False,
+    nlist: int = 256,
+    nprobe: int = 32,
+):
+    """
+    Build FAISS index tu cac embedding shards da luu tren disk.
+
+    Args:
+        use_ivf:  Neu True, dung IndexIVFFlat thay vi IndexFlatIP.
+                  IVFFlat chi luu centroids trong RAM (~nlist * dim * 4 bytes)
+                  thay vi toan bo vectors (~num_vectors * dim * 4 bytes).
+                  Vi du: 560K vectors, dim=768 -> FlatIP: 1.72GB, IVFFlat: ~400MB.
+        nlist:    So clusters. Tuyen tinh voi nlist, nen chon ~ 4*sqrt(N).
+        nprobe:   So clusters quet khi query. Tang nprobe -> tang recall, giam speed.
+    """
     import numpy as np
     import pandas as pd
 
@@ -100,27 +137,91 @@ def build_faiss_index_from_shards(output_dir: str | Path):
             f"{len(embedding_files)} != {len(metadata_files)}"
         )
 
-    index = None
+    # --- Pass 1: thu thap metadata va shard paths (khong load het vao RAM) ---
     all_metadata = []
     offset = 0
+    dim: int | None = None
 
-    for emb_file, meta_file in zip(embedding_files, metadata_files):
-        embeddings = np.load(emb_file).astype("float32")
-        metadata = pd.read_parquet(meta_file)
+    print(f"Building FAISS index (type={'IVFFlat' if use_ivf else 'FlatIP'}) "
+          f"from {len(embedding_files)} shards...")
 
-        if index is None:
-            index = faiss.IndexFlatIP(embeddings.shape[1])
-
-        metadata.insert(
-            0,
-            "embedding_index",
-            np.arange(offset, offset + len(metadata)),
+    if use_ivf:
+        # IVF yeu cau train truoc tren mot tap con embeddings
+        index = _build_ivf_index(
+            faiss=faiss,
+            embedding_files=embedding_files,
+            metadata_files=metadata_files,
+            nlist=nlist,
+            nprobe=nprobe,
         )
-        index.add(embeddings)
-        all_metadata.append(metadata)
-        offset += len(metadata)
+        dim = index.d
+    else:
+        # Pass duy nhat: add tung shard vao FlatIP
+        index = None
+        for emb_file, meta_file in zip(embedding_files, metadata_files):
+            embeddings = np.load(emb_file).astype("float32")
+            meta = pd.read_parquet(meta_file)
+
+            if index is None:
+                dim = embeddings.shape[1]
+                index = faiss.IndexFlatIP(dim)
+
+            meta = meta.copy()
+            meta.insert(0, "embedding_index", np.arange(offset, offset + len(meta)))
+            index.add(embeddings)
+            all_metadata.append(meta)
+            offset += len(meta)
+            print(f"  added shard {emb_file.name}: {len(embeddings)} vectors")
+
+        return index, pd.concat(all_metadata, ignore_index=True)
+
+    # Neu dung IVF, metadata da duoc thu thap trong _build_ivf_index
+    # Can doc lai de tra ve cung format
+    all_metadata = []
+    offset = 0
+    for emb_file, meta_file in zip(embedding_files, metadata_files):
+        meta = pd.read_parquet(meta_file)
+        meta = meta.copy()
+        meta.insert(0, "embedding_index", np.arange(offset, offset + len(meta)))
+        all_metadata.append(meta)
+        offset += len(meta)
 
     return index, pd.concat(all_metadata, ignore_index=True)
+
+
+def _build_ivf_index(faiss, embedding_files, metadata_files, nlist: int, nprobe: int):
+    """
+    Build IndexIVFFlat:
+    1. Train tren toan bo embeddings (can load het 1 lan)
+    2. Add vectors vao index da train
+
+    RAM usage trong luc build cao (~tuong duong FlatIP) nhung khi serve
+    chi ton ~nlist * dim * 4 bytes cho centroids + vectors.
+    IndexIVFFlat van luu vectors day du nhung on-disk friendly hon.
+    """
+    import numpy as np
+
+    print(f"  Loading all embeddings for IVF training (nlist={nlist})...")
+    all_embeddings = np.vstack([
+        np.load(f).astype("float32") for f in embedding_files
+    ])
+    dim = all_embeddings.shape[1]
+    print(f"  Total vectors: {len(all_embeddings)}, dim: {dim}")
+
+    # Chon so train samples: it nhat 39 * nlist theo FAISS guideline
+    n_train = min(len(all_embeddings), max(39 * nlist, 10_000))
+    train_sample = all_embeddings[:n_train]
+
+    quantizer = faiss.IndexFlatIP(dim)
+    index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_INNER_PRODUCT)
+    index.nprobe = nprobe
+
+    print(f"  Training IVF index on {n_train} samples...")
+    index.train(train_sample)
+    print("  Training done. Adding all vectors...")
+    index.add(all_embeddings)
+    print(f"  IVF index built: {index.ntotal} vectors, nlist={nlist}, nprobe={nprobe}")
+    return index
 
 
 def _build_embedding_shards(
