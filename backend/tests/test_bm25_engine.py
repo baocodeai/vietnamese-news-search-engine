@@ -92,6 +92,27 @@ def test_bm25_returns_empty_list_for_empty_query():
     assert engine.search("", top_k=5) == []
 
 
+def test_bm25_does_not_return_results_for_weak_multi_term_query():
+    documents = [
+        SearchDocument(
+            id=1,
+            title="Tai xe chong doi CSGT thanh pho Vinh",
+            content="Su viec duoc xac dinh xay ra tai thanh pho Vinh.",
+            url="https://example.com/vinh",
+        ),
+        SearchDocument(
+            id=2,
+            title="Thong tin kinh te",
+            content="Gia vang trong nuoc tang manh.",
+            url="https://example.com/gold",
+        ),
+    ]
+    engine = BM25SearchEngine()
+    engine.build(documents)
+
+    assert engine.search("Vinh cu to", top_k=5) == []
+
+
 def test_bm25_returns_empty_list_before_build():
     engine = BM25SearchEngine()
 

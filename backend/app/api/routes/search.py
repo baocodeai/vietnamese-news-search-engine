@@ -338,6 +338,8 @@ def apply_filters(
     category: str,
     author: str,
     source: str,
+    from_date: str = "",
+    to_date: str = "",
 ) -> list[SearchResult]:
     filtered = []
     for result in results:
@@ -348,8 +350,63 @@ def apply_filters(
             continue
         if source and result_source != source:
             continue
+        # Loc theo khoang thoi gian neu co from_date hoac to_date
+        if from_date or to_date:
+            result_date = _parse_result_date(result.crawled_at)
+            if from_date and result_date and result_date < from_date:
+                continue
+            if to_date and result_date and result_date > to_date:
+                continue
         filtered.append(result)
     return filtered
+
+
+def _parse_result_date(crawled_at: str | int | float | None) -> str:
+    """
+    Chuyen crawled_at bat ky dinh dang nao sang chuoi YYYY-MM-DD.
+    Tra ve chuoi rong neu khong parse duoc.
+    """
+    if crawled_at in ("", None):
+        return ""
+    if isinstance(crawled_at, (int, float)):
+        # Unix timestamp: giay hoac mili-giay
+        ts = crawled_at / 1000 if crawled_at > 10_000_000_000 else crawled_at
+        return time.strftime("%Y-%m-%d", time.gmtime(ts))
+    date_str = str(crawled_at)
+    # Lay 10 ky tu dau (YYYY-MM-DD) neu co
+    if len(date_str) >= 10:
+        return date_str[:10]
+    return ""
+
+
+def sort_results_by_date(results: list[SearchResult]) -> list[SearchResult]:
+    """Sap xep ket qua theo ngay moi nhat truoc (crawled_at giam dan)."""
+    return sorted(
+        results,
+        key=lambda r: _parse_result_date(r.crawled_at) or "",
+        reverse=True,
+    )
+
+
+def make_result_facets(results: list[SearchResult]) -> dict[str, list[dict[str, Any]]]:
+    """
+    Tinh facets tu danh sach SearchResult.
+
+    Khac voi make_facets() nhan SearchDocument (keyword corpus),
+    ham nay nhan ket qua search truc tiep — dung cho ca semantic va hybrid mode.
+    """
+    def top_values(values: list[str]) -> list[dict[str, Any]]:
+        counts = Counter(value for value in values if value)
+        return [
+            {"value": value, "count": count}
+            for value, count in counts.most_common(20)
+        ]
+
+    return {
+        "category": top_values([r.topic for r in results]),
+        "author": top_values([r.author for r in results]),
+        "source": top_values([r.source or source_from_url(r.url) for r in results]),
+    }
 
 
 def deduplicate_results_by_document(results: list[SearchResult]) -> list[SearchResult]:
@@ -387,6 +444,56 @@ def deduplicate_documents_by_document(documents: list[SearchDocument]) -> list[S
     return deduplicated
 
 
+
+def _resolve_semantic_engine(engine: Any) -> Any | None:
+    """
+    Lay SemanticSearchEngine tu bat ky engine nao (semantic hoac hybrid).
+    Tra ve None neu engine khong co semantic component.
+    """
+    if hasattr(engine, "is_encoder_loaded"):
+        return engine
+    if hasattr(engine, "semantic_engine"):
+        return engine.semantic_engine
+    return None
+
+
+@router.get("/semantic/status")
+def semantic_status() -> dict[str, Any]:
+    """
+    Kiem tra trang thai E5 model:
+    - ready=true: model da load, search chay ngay
+    - ready=false, loading=true: dang load trong background
+    - ready=false, loading=false: chua duoc kich hoat
+    """
+    try:
+        engine = get_search_engine("semantic")
+        sem = _resolve_semantic_engine(engine)
+        ready = bool(sem and sem.is_encoder_loaded)
+        return {"ready": ready, "loading": not ready}
+    except Exception:
+        return {"ready": False, "loading": False}
+
+
+@router.post("/semantic/warmup")
+def semantic_warmup() -> dict[str, str]:
+    """
+    Kich hoat load E5 model trong background thread.
+    Return ngay lap tuc — dung de pre-warm model truoc khi search.
+    """
+    try:
+        engine = get_search_engine("semantic")
+        sem = _resolve_semantic_engine(engine)
+        if sem is None:
+            return {"status": "unavailable", "message": "Semantic engine chua duoc cau hinh."}
+        if sem.is_encoder_loaded:
+            return {"status": "ready", "message": "E5 model da san sang."}
+        sem.warmup()
+        return {"status": "loading", "message": "E5 model dang duoc load trong background."}
+    except Exception as exc:
+        logger.warning("semantic warmup failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
 @router.get("/search")
 def search(
     q: str = Query("", alias="q"),
@@ -411,6 +518,31 @@ def search(
         engine = get_search_engine(selected_mode)
         documents = get_documents(engine)
         offset = (page - 1) * page_size
+        raw_results: list[SearchResult] = []
+
+        # Neu la semantic/hybrid va model chua load:
+        # kich hoat background load va tra ve tin hieu cho frontend ngay lap tuc.
+        # Tranh ECONNRESET do proxy timeout khi cho model load 60s.
+        if query and selected_mode in {"semantic", "hybrid"}:
+            sem = _resolve_semantic_engine(engine)
+            # getattr voi default=True de backward-compat voi FakeEngine trong test
+            # (chi trigger warmup neu engine thuc su co is_encoder_loaded=False)
+            if sem is not None and not getattr(sem, "is_encoder_loaded", True):
+                sem.warmup()  # non-blocking, chay trong background thread
+                latency_ms = round((time.perf_counter() - started) * 1000)
+                logger.info("semantic model loading, returning early for query=%r", query)
+                return {
+                    "query": query,
+                    "mode": get_search_mode(selected_mode),
+                    "total": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "latency_ms": latency_ms,
+                    "results": [],
+                    "facets": {"category": [], "author": [], "source": []},
+                    "semantic_loading": True,
+                    "explain": None,
+                }
 
         if query:
             rerank_enabled = should_rerank(rerank)
@@ -419,7 +551,7 @@ def search(
                 candidate_k = max(candidate_k, offset + settings.reranker_top_k)
             raw_results = engine.search(query, top_k=candidate_k)
             filtered_results = deduplicate_results_by_document(
-                apply_filters(raw_results, category, author, source)
+                apply_filters(raw_results, category, author, source, from_date, to_date)
             )
             total = len(filtered_results)
             filtered_results, did_rerank = maybe_rerank_results(
@@ -428,6 +560,10 @@ def search(
                 top_k=max(offset + page_size, page_size),
                 rerank=rerank,
             )
+            # Ap dung sap xep theo ngay neu user chon sort=newest
+            # (override thu tu relevance/rerank)
+            if sort == "newest":
+                filtered_results = sort_results_by_date(filtered_results)
             page_results = filtered_results[offset: offset + page_size]
             payload_results = [
                 result_to_payload(
@@ -472,7 +608,7 @@ def search(
             "page_size": page_size,
             "latency_ms": latency_ms,
             "results": payload_results,
-            "facets": make_facets(documents),
+            "facets": make_result_facets(raw_results) if query else make_facets(documents),
             "explain": {
                 "query": query,
                 "folded_query": normalize_text(query),
@@ -493,6 +629,11 @@ def search(
     except HTTPException:
         logger.exception("search failed mode=%s query=%r", selected_mode, query)
         raise
+    except Exception as e:
+        import traceback
+        logger.exception("search failed mode=%s query=%r: %s", selected_mode, query, str(e))
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": traceback.format_exc()})
 
 
 @router.get("/suggest")
@@ -594,13 +735,10 @@ def inspect_semantic_artifacts() -> dict[str, Any]:
         except json.JSONDecodeError as exc:
             error = f"Invalid semantic config: {exc}"
 
-    if metadata_exists:
-        try:
-            import pandas as pd
-
-            row_count = len(pd.read_parquet(settings.semantic_metadata_path, columns=["doc_id"]))
-        except Exception as exc:
-            error = f"Cannot read semantic metadata: {exc}"
+    if metadata_exists and not error:
+        # Lay row_count tu config.json (da doc o tren) thay vi load lai parquet.
+        # Tranh tieu ton ~200MB RAM moi lan goi /diagnostics.
+        row_count = config.get("num_vectors")
 
     missing = [
         name

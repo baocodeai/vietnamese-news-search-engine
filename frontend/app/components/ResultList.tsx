@@ -39,6 +39,11 @@ export function ResultList({
       <div className="result-summary-bar">
         <strong>{response.total.toLocaleString("vi-VN")}</strong>
         <span>kết quả phù hợp</span>
+        {response.latency_ms > 0 && (
+          <span className="latency-info" style={{ opacity: 0.85, fontSize: "0.85em" }}>
+            (trong <strong>{response.latency_ms}</strong> ms)
+          </span>
+        )}
       </div>
 
       {semanticLoading ? (
