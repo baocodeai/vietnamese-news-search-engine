@@ -606,6 +606,35 @@ a:focus-visible {
   }
 }
 
+.score-tag-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.score-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.score-value {
+  color: var(--teal);
+  font-weight: 700;
+}
+
+.score-details {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.68rem;
+  margin-left: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
